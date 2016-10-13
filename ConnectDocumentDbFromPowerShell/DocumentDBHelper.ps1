@@ -1,4 +1,10 @@
-    function PostDocumentToDocumentDB
+ <#
+FILE: DocumentDbHelper.ps1
+DEV: yingxue
+
+SUMMARY: DocumentDB helper functions: Get databases, collections; Post document; Query documents 
+#>
+    function Upsert-DocumentToDocumentDB
     {
         [CmdletBinding()]
         param
@@ -12,21 +18,63 @@
             [Parameter(Mandatory = $true)]
             [string]$collectionName,
             [Parameter(Mandatory = $true)]
-            [string]$sourceFile
+            [string]$documentContent
         )
-    
-        $TestPath = "D:\test.txt"
-        "in helper" | Out-File $TestPath
-        $rootUri = "https://" + $accountName + ".documents.azure.com" 
+
+        $rootUri = "https://$accountName.documents.azure.com" 
         $apiDate = GetUTDate
-    
-        $collection = GetCollectionFromDocumentDB -accountName $AccountName -connectionKey $ConnetionKey -databaseName $DatabaseName -collectionName $CollectionName
-         
-        $json = Get-Content -Path $sourceFile
-        PostDocument -document $json -dbname $databaseName -collection $collectionName 
+           
+        UpsertDocument -document $documentContent -dbname $databaseName -collection $collectionName             
     }
 
-    function GetDatabaseFromDocumentDB
+    function Delete-DocumentFromDocumentDB
+    {
+        [CmdletBinding()]
+            param
+            (
+                [Parameter(Mandatory = $true)]
+                [string]$accountName,
+                [Parameter(Mandatory = $true)]
+                [string]$connectionKey,
+                [Parameter(Mandatory = $true)]
+                [string]$databaseName,
+                [Parameter(Mandatory = $true)]
+                [string]$collectionName,
+                [Parameter(Mandatory = $true)]
+                [string]$documentName
+            )
+        
+        $rootUri = "https://$accountName.documents.azure.com"   
+        $apiDate = GetUTDate
+         
+        DeleteDocument -documentName $documentName -dbname $databaseName -collection $collectionName              
+    }
+
+    function Query-DocumentsFromDocumentDB
+    {
+        [CmdletBinding()]
+            param
+            (
+                [Parameter(Mandatory = $true)]
+                [string]$accountName,
+                [Parameter(Mandatory = $true)]
+                [string]$connectionKey,
+                [Parameter(Mandatory = $true)]
+                [string]$databaseName,
+                [Parameter(Mandatory = $true)]
+                [string]$collectionName,
+                [Parameter(Mandatory = $true)]
+                [string]$queryString
+            )
+        
+        $rootUri = "https://$accountName.documents.azure.com"   
+        $apiDate = GetUTDate
+
+        $docs = QueryDocuments -queryString $queryString -dbname $databaseName -collection $collectionName 
+        $docs            
+    }
+
+    function Get-DatabaseFromDocumentDB
     {
         [CmdletBinding()]
         param
@@ -39,7 +87,7 @@
             [string]$databaseName
         )
     
-        $rootUri = "https://" + $accountName + ".documents.azure.com" 
+        $rootUri = "https://$accountName.documents.azure.com" 
         $apiDate = GetUTDate
  
         $db = GetDatabases | where { $_.id -eq $databaseName }
@@ -52,7 +100,7 @@
         $db 
     }
 
-    function GetCollectionFromDocumentDB
+    function Get-CollectionFromDocumentDB
     {
         [CmdletBinding()]
         param
@@ -67,12 +115,10 @@
             [string]$collectionName
         )
  
-        $rootUri = "https://" + $accountName + ".documents.azure.com"   
+        $rootUri = "https://$accountName.documents.azure.com"   
         $apiDate = GetUTDate
-
-        $db = GetDatabaseFromDocumentDB -accountName $AccountName -connectionKey $ConnetionKey -databaseName $DatabaseName
     
-        $dbname = "dbs/" + $databaseName
+        $dbname = "dbs/$databaseName"
         $collection = GetCollections -dbname $dbname | where { $_.id -eq $collectionName }
      
         if($collection -eq $null){
@@ -83,12 +129,10 @@
         $collection
     }
 
-
      # ---------------------------------------------------------------------
      #          Helper Functions
      #----------------------------------------------------------------------
-
-  
+ 
     function GetKey([string]$Verb = '',[string]$ResourceId = '',[string]$ResourceType = '',[string]$Date = '',[string]$masterKey = '') 
     {
         $keyBytes = [System.Convert]::FromBase64String($masterKey) 
@@ -105,10 +149,8 @@
      {
         $authz = GetKey -Verb $action -ResourceType $resType -ResourceId $resourceId -Date $apiDate -masterKey $connectionKey
         
-        $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
-        $headers.Add("Authorization", $authz)
-        $headers.Add("x-ms-version", '2015-12-16')
-        $headers.Add("x-ms-date", $apiDate) 
+        $headers = @{"Authorization" = $authz; "x-ms-version"='2015-12-16'; "x-ms-date" = $apiDate} 
+
         $headers
     }
  
@@ -121,39 +163,66 @@
  
     function GetDatabases() 
     {
-        $uri = $rootUri + "/dbs"
+        $uri = "$rootUri/dbs"
  
         $headers = BuildHeaders -resType dbs
  
         $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
         $response.Databases
  
-        Write-Host ("Found " + $Response.Databases.Count + " Database(s)")
+        Write-Host ("Found $Response.Databases.Count Database(s)")
     }
 
     function GetCollections([string]$dbname)
     {
-        $uri = $rootUri + "/" + $dbname + "/colls"
+        $uri = "$rootUri/$dbname/colls"
 
         $headers = BuildHeaders -resType colls -resourceId $dbname
 
         $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers
         $response.DocumentCollections
 
-        Write-Host ("Found " + $Response.DocumentCollections.Count + " DocumentCollection(s)")
+        Write-Host ("Found $Response.DocumentCollections.Count DocumentCollection(s)")
     }
 
-    function PostDocument([string]$document, [string]$dbname, [string]$collection)
+    function UpsertDocument([string]$document, [string]$dbname, [string]$collection)
     {
-        $collName = "dbs/"+$dbname+"/colls/" + $collection
+        $collName = "dbs/$dbname/colls/$collection"
 
-        $uri = $rootUri + "/" + $collName + "/docs"
+        $uri = "$rootUri/$collName/docs"
 
         $headers = BuildHeaders -action Post -resType docs -resourceId $collName
         $headers.Add("x-ms-documentdb-is-upsert", "true")
      
         $response = Invoke-RestMethod $uri -Method Post -Body $document -ContentType 'application/json' -Headers $headers
-        #$response
-       
-        Write-Host ("Posted document into Collection " + $collection + " in DB " + $databaseName)
+           
+        Write-Host ("Upserted document into Collection $collection in DB $databaseName")
+    }
+
+    function DeleteDocument([string]$documentName, [string]$dbname, [string]$collection)
+    {       
+        $docName = "dbs/$dbname/colls/$collection/docs/$documentName"
+
+        $uri = "$rootUri/$docName"
+
+        $headers = BuildHeaders -action Delete -resType docs -resourceId $docName
+
+        $response = Invoke-RestMethod -Uri $uri -Method Delete -Headers $headers
+             
+        Write-Host ("Deleted document $documentName from Collection $collection in DB $databaseName")
+    }
+
+    function QueryDocuments([string]$queryString, [string]$dbname, [string]$collection)
+    {
+        $collName = "dbs/$dbname/colls/$collection"
+
+        $uri = "$rootUri/$collName/docs"
+
+        $headers = BuildHeaders -action Post -resType docs -resourceId $collName
+        $headers.Add("x-ms-documentdb-isquery", "true")
+     
+        $response = Invoke-RestMethod $uri -Method Post -Body $queryString -ContentType 'application/query+json' -Headers $headers
+        $response.Documents
+
+        Write-Host ("Queried document(s) into Collection $collection in DB $databaseName")
     }
